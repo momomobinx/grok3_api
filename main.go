@@ -519,17 +519,34 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	cookie = strings.TrimSpace(cookie)
-	if cookie == "" && len(grokCookies) > 0 {
-		cookieIndex = getCookieIndex(len(grokCookies), body.CookieIndex)
-		cookie = grokCookies[cookieIndex]
-	}
-	cookie = strings.TrimSpace(cookie)
-	if cookie == "" {
-		log.Println("Error: No Grok 3 cookie")
-		http.Error(w, "Error: No Grok 3 cookie", http.StatusBadRequest)
-		return
-	}
+	// 先从 Header 读取
+cookie := strings.TrimSpace(r.Header.Get("Cookie"))
+
+// 如果 Header 为空，再从 Body 解析
+if cookie == "" {
+    body := RequestBody{}
+    if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+        if body.GrokCookies != nil {
+            if ck, ok := body.GrokCookies.(string); ok {
+                cookie = strings.TrimSpace(ck)
+            }
+        }
+    }
+}
+
+// 如果 cookie 还是空，就尝试使用默认的 grokCookies 数组
+if cookie == "" && len(grokCookies) > 0 {
+    cookieIndex = getCookieIndex(len(grokCookies), body.CookieIndex)
+    cookie = grokCookies[cookieIndex]
+}
+
+// 仍然为空，则返回错误
+if cookie == "" {
+    log.Println("Error: No Grok 3 cookie")
+    http.Error(w, "Error: No Grok 3 cookie", http.StatusBadRequest)
+    return
+}
+
 
 	messages := body.Messages
 	if len(messages) == 0 {
