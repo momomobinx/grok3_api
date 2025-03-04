@@ -5,4 +5,5 @@
 ”
 附加事项：
 新增 -cookiesDir 来自定义cookies目录位置
+不支持xxxx.xxxx.txt形式。请直接使用xxxxx.txt格式
 其余均和原项目：https://github.com/orzogc/grok3_api 相同
