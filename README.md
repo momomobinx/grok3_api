@@ -1,9 +1,25 @@
-快速使用指南：
-  1.将你的cookie，以.txt的形式，放在cookies文件夹中。每一条cookie为一个.txt文件，名称不限。注意：只保留sso=xxxxxx字段。
-  2.使用 启动.bat 一键启动。
-  3.如果有"Unauthorized: Bearer token required"，尝试在酒馆的api自定义密钥里输入：123456（默认token）
-”
-附加事项：
-新增 -cookiesDir 来自定义cookies目录位置
-不支持xxxx.xxxx.txt形式。请直接使用xxxxx.txt格式
-其余均和原项目：https://github.com/orzogc/grok3_api 相同
+# **快速使用指南**  
+
+## **1. 配置 Cookie**  
+- **存放位置：** 将你的 Cookie 以 `.txt` 格式存放在 `cookies` 文件夹中。  
+- **命名规则：** 每个 `.txt` 文件代表一条 Cookie，文件名可自由命名。  
+- **内容要求：** 仅保留 `sso=xxxxxx` 字段，删除其他内容。  
+
+## **2. 启动项目**  
+- 直接运行 `启动.bat` 一键启动。  
+
+## **3. 解决授权错误**  
+如果遇到 **"Unauthorized: Bearer token required"** 错误，请尝试在 **酒馆 API** 的 **自定义密钥** 中输入默认 Token：123456
+
+---
+
+### **附加事项**  
+✅ **新增功能：**  
+- 通过 `-cookiesDir` 参数自定义 `cookies` 目录位置。  
+
+❌ **不支持的文件格式：**  
+- **不支持** `xxxx.xxx.txt` 形式的文件名。  
+- **请直接使用** `xxxxx.txt` 格式。  
+
+📌 **其他说明**  
+- 其余功能与原项目相同，参考：[grok3_api](https://github.com/orzogc/grok3_api)
