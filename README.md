@@ -24,3 +24,7 @@
 
 📌 **其他说明**  
 - 其余功能与原项目相同，参考：[grok3_api](https://github.com/orzogc/grok3_api)
+
+**安卓用户提示**
+- 启动命令参考（后台启动） `./grok-server -token your-auth-token -cookie xxxxxxx -port 8180 &`
+- 具体使用参考：https://grok.com/share/bGVnYWN5_7cafcf60-ca6b-4097-bdbc-ffaee19b2e2c
