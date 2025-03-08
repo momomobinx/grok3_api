@@ -68,7 +68,7 @@ type ToolOverrides struct {
 }
 
 // preparePayload 构建 Grok 3 Web API 的请求负载
-func (c *GrokClient) preparePayload(message string) map[string]any {
+func (c *GrokClient) preparePayload(message string, fileAttachments []string) map[string]any {
 	var toolOverrides any = ToolOverrides{}
 	if c.enableSearch {
 		toolOverrides = map[string]any{}
@@ -81,7 +81,7 @@ func (c *GrokClient) preparePayload(message string) map[string]any {
 		"enableImageGeneration":     true,
 		"enableImageStreaming":      true,
 		"enableSideBySide":          true,
-		"fileAttachments":           []string{},
+		"fileAttachments":           fileAttachments,
 		"forceConcise":              false,
 		"imageAttachments":          []string{},
 		"imageGenerationCount":      2,
@@ -163,6 +163,7 @@ var (
 	ignoreThinking   *bool
 	httpProxy        *string
 	cookiesDir       *string
+	longTxt          *bool
 	httpClient       = &http.Client{Timeout: 30 * time.Minute}
 	nextCookieIndex  = struct {
 		sync.Mutex
@@ -171,8 +172,8 @@ var (
 )
 
 // sendMessage 发送消息到 Grok 3 Web API
-func (c *GrokClient) sendMessage(message string, stream bool) (io.ReadCloser, error) {
-	payload := c.preparePayload(message)
+func (c *GrokClient) sendMessage(message string, stream bool, fileAttachments []string) (io.ReadCloser, error) {
+	payload := c.preparePayload(message, fileAttachments)
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal payload: %v", err)
@@ -461,6 +462,32 @@ func getCookieIndex(len int, cookieIndex uint) uint {
 	return cookieIndex - 1
 }
 
+// createMessagesAttachment 创建包含消息历史的文本文件，存储在项目根目录
+func createMessagesAttachment(messages []struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}) (string, error) {
+	var builder strings.Builder
+	for _, msg := range messages {
+		builder.WriteString(fmt.Sprintf("[%s]\n%s\n\n", msg.Role, msg.Content))
+	}
+
+	// 在项目根目录创建文件
+	fileName := fmt.Sprintf("messages-%s.txt", uuid.New().String())
+	tempFile, err := os.Create(fileName)
+	if err != nil {
+		return "", fmt.Errorf("failed to create file in root directory: %v", err)
+	}
+	defer tempFile.Close()
+
+	// 写入消息内容
+	if _, err := tempFile.WriteString(builder.String()); err != nil {
+		return "", fmt.Errorf("failed to write to file: %v", err)
+	}
+
+	return tempFile.Name(), nil
+}
+
 // handleChatCompletion 处理 /v1/chat/completions 请求
 func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Request from %s for %s", r.RemoteAddr, completionsPath)
@@ -531,20 +558,41 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	messageJson := bytes.NewBuffer([]byte{})
-	jsonEncoder := json.NewEncoder(messageJson)
-	jsonEncoder.SetEscapeHTML(false)
-	jsonEncoder.SetIndent("", "")
-	err := jsonEncoder.Encode(messages)
-	if err != nil {
-		log.Println("Error: Encoding JSON failed")
-		http.Error(w, "Error: Encoding JSON failed", http.StatusInternalServerError)
-		return
+	// 获取最后一条用户消息
+	lastMessage := messages[len(messages)-1].Content
+	var fileAttachments []string
+
+	// 只有在启用 longtxt 且有多条消息时才创建附件
+	if *longTxt && len(messages) > 1 {
+		tempFilePath, err := createMessagesAttachment(messages)
+		if err != nil {
+			log.Printf("Error creating message attachment: %v", err)
+			http.Error(w, fmt.Sprintf("Error creating message attachment: %v", err), http.StatusInternalServerError)
+			return
+		}
+		fileAttachments = append(fileAttachments, tempFilePath)
+		defer os.Remove(tempFilePath) // 清理临时文件
+		log.Printf("Created message attachment with %d messages at %s", len(messages), tempFilePath)
 	}
-	if messageJson.Len() <= 2 {
-		log.Println("Bad Request: No user message found")
-		http.Error(w, "Bad Request: No user message found", http.StatusBadRequest)
-		return
+
+	// 如果没有启用 longtxt 或只有一条消息，使用原来的 JSON 格式
+	if len(fileAttachments) == 0 {
+		messageJson := bytes.NewBuffer([]byte{})
+		jsonEncoder := json.NewEncoder(messageJson)
+		jsonEncoder.SetEscapeHTML(false)
+		jsonEncoder.SetIndent("", "")
+		err := jsonEncoder.Encode(messages)
+		if err != nil {
+			log.Println("Error: Encoding JSON failed")
+			http.Error(w, "Error: Encoding JSON failed", http.StatusInternalServerError)
+			return
+		}
+		if messageJson.Len() <= 2 {
+			log.Println("Bad Request: No user message found")
+			http.Error(w, "Bad Request: No user message found", http.StatusBadRequest)
+			return
+		}
+		lastMessage = messageJson.String()
 	}
 
 	var beforePromptText, afterPromptText string
@@ -558,7 +606,7 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	} else {
 		afterPromptText = *textAfterPrompt
 	}
-	message := beforePromptText + messageJson.String() + afterPromptText
+	message := beforePromptText + lastMessage + afterPromptText
 
 	isReasoning := strings.TrimSpace(body.Model) == grok3ReasoningModelName
 	enableSearch := body.EnableSearch > 0
@@ -567,7 +615,7 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	grokClient := NewGrokClient(cookie, isReasoning, enableSearch, keepConversation, ignoreThink)
 	log.Printf("Use the cookie with index %d to request Grok 3 Web API", cookieIndex+1)
-	respReader, err := grokClient.sendMessage(message, body.Stream)
+	respReader, err := grokClient.sendMessage(message, body.Stream, fileAttachments)
 	if err != nil {
 		log.Printf("Error: %v", err)
 		http.Error(w, fmt.Sprintf("Error: %v", err), http.StatusInternalServerError)
@@ -653,6 +701,7 @@ func main() {
 	keepChat = flag.Bool("keepChat", false, "Retain the chat conversation")
 	ignoreThinking = flag.Bool("ignoreThinking", false, "Ignore the thinking content while using the reasoning model")
 	httpProxy = flag.String("httpProxy", "", "HTTP/SOCKS5 proxy")
+	longTxt = flag.Bool("longtxt", false, "Enable uploading long conversations as text file attachment")
 	port := flag.Uint("port", 8180, "Server port")
 	flag.Parse()
 
@@ -711,6 +760,6 @@ func main() {
 
 	http.HandleFunc(completionsPath, handleChatCompletion)
 	http.HandleFunc(listModelsPath, listModels)
-	log.Printf("Server starting on :%d with %d cookies loaded", *port, len(grokCookies))
+	log.Printf("Server starting on :%d with %d cookies loaded, longtxt enabled: %v", *port, len(grokCookies), *longTxt)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), nil))
 }
