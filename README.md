@@ -12,7 +12,8 @@
 ## **3. 解决授权错误**  
 如果遇到 **❌ "Unauthorized: Bearer token required"** 错误，请尝试在 **酒馆 API** 的 **自定义密钥** 中输入默认 Token：123456（或者你自己设定的Token）
 ## **4. 出现\n\n格式问题**  
-请用[正则](https://github.com/orzogc/grok3_api) 作者：[orzogc](https://github.com/orzogc)
+- 请用[正则](https://github.com/GhostXia/grok3_api-Fix/blob/main/grok3_%E6%9B%BF%E6%8D%A2%E5%9B%9E%E8%BD%A6%E7%AC%A6%E5%8F%B7.json) 作者：[orzogc](https://github.com/orzogc)
+- 虽然绝大多数时候，重新生成一下就好了。
 ---
 
 ### **附加事项**  
