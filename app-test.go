@@ -26,15 +26,16 @@ type GrokClient struct {
 	headers        map[string]string // HTTP 请求头
 	isReasoning    bool              // 是否使用推理模型
 	enableSearch   bool              // 是否启用网络搜索
+	uploadMessage  bool              // 是否将消息上传为文件
 	keepChat       bool              // 是否保留聊天历史
 	ignoreThinking bool              // 是否忽略思考令牌
-	longTxt        bool              // 是否启用长文本处理并自动选择上传方法
-	messageLimit   int               // 选择上传方法的字符阈值（默认：40000）
+	longTxt        bool              // 是否启用长文本处理（仅为兼容性保留，未在 sendMessage 中使用）
+	messageLimit   int               // 消息字符限制（默认 40000）
 	httpClient     *http.Client      // 可自定义的 HTTP 客户端
 }
 
 // NewGrokClient 创建一个新的 GrokClient 实例。
-func NewGrokClient(cookie string, isReasoning, enableSearch, keepChat, ignoreThinking, longTxt bool) *GrokClient {
+func NewGrokClient(cookie string, isReasoning, enableSearch, uploadMessage, keepChat, ignoreThinking, longTxt bool) *GrokClient {
 	return &GrokClient{
 		headers: map[string]string{
 			"accept":             "*/*",
@@ -55,24 +56,85 @@ func NewGrokClient(cookie string, isReasoning, enableSearch, keepChat, ignoreThi
 		},
 		isReasoning:    isReasoning,
 		enableSearch:   enableSearch,
+		uploadMessage:  uploadMessage,
 		keepChat:       keepChat,
 		ignoreThinking: ignoreThinking,
 		longTxt:        longTxt,
-		messageLimit:   40000, // 固定阈值用于方法选择
+		messageLimit:   40000,
 		httpClient:     &http.Client{Timeout: 30 * time.Minute},
 	}
 }
 
-// UploadFileRequest 表示上传文件的请求结构。
-type UploadFileRequest struct {
-	Content      string `json:"content"`
-	FileMimeType string `json:"fileMimeType"`
-	FileName     string `json:"fileName"`
+// ToolOverrides 定义了工具覆盖选项，用于 API 请求负载。
+type ToolOverrides struct {
+	ImageGen     bool `json:"imageGen"`
+	TrendsSearch bool `json:"trendsSearch"`
+	WebSearch    bool `json:"webSearch"`
+	XMediaSearch bool `json:"xMediaSearch"`
+	XPostAnalyze bool `json:"xPostAnalyze"`
+	XSearch      bool `json:"xSearch"`
 }
 
-// UploadFileResponse 表示上传文件的响应结构。
-type UploadFileResponse struct {
-	FileMetadataId string `json:"fileMetadataId"`
+// preparePayload 构造 Grok 3 Web API 的请求负载。
+func (c *GrokClient) preparePayload(message string, fileId string) map[string]any {
+	var toolOverrides any = ToolOverrides{}
+	if c.enableSearch {
+		toolOverrides = map[string]any{"webSearch": true}
+	}
+
+	fileAttachments := []string{}
+	if fileId != "" {
+		fileAttachments = []string{fileId}
+	}
+
+	return map[string]any{
+		"deepsearchPreset":          "",
+		"disableSearch":             false,
+		"enableImageGeneration":     true,
+		"enableImageStreaming":      true,
+		"enableSideBySide":          true,
+		"fileAttachments":           fileAttachments,
+		"forceConcise":              false,
+		"imageAttachments":          []string{},
+		"imageGenerationCount":      2,
+		"isPreset":                  false,
+		"isReasoning":               c.isReasoning,
+		"message":                   message,
+		"modelName":                 "grok-3",
+		"returnImageBytes":          false,
+		"returnRawGrokInXaiRequest": false,
+		"sendFinalMetadata":         true,
+		"temporary":                 !c.keepChat,
+		"toolOverrides":             toolOverrides,
+		"webpageUrls":               []string{},
+	}
+}
+
+// getModelName 根据 isReasoning 标志返回适当的模型名称。
+func (c *GrokClient) getModelName() string {
+	if c.isReasoning {
+		return grok3ReasoningModelName
+	}
+	return grok3ModelName
+}
+
+// RequestBody 表示 /v1/chat/completions 的 POST 请求 JSON 结构体。
+type RequestBody struct {
+	Model    string `json:"model"`
+	Messages []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"messages"`
+	Stream           bool   `json:"stream"`
+	GrokCookies      any    `json:"grokCookies,omitempty"`
+	CookieIndex      uint   `json:"cookieIndex,omitempty"`
+	EnableSearch     int    `json:"enableSearch,omitempty"`
+	UploadMessage    int    `json:"uploadMessage,omitempty"`
+	TextBeforePrompt string `json:"textBeforePrompt,omitempty"`
+	TextAfterPrompt  string `json:"textAfterPrompt,omitempty"`
+	KeepChat         int    `json:"keepChat,omitempty"`
+	IgnoreThinking   int    `json:"ignoreThinking,omitempty"`
+	LongTxt          int    `json:"longTxt,omitempty"`
 }
 
 // ResponseToken 表示 Grok 3 Web API 的单个令牌响应。
@@ -83,68 +145,6 @@ type ResponseToken struct {
 			IsThinking bool   `json:"isThinking"`
 		} `json:"response"`
 	} `json:"result"`
-}
-
-// RequestBody 表示 /v1/chat/completions 的 JSON 请求体结构。
-type RequestBody struct {
-	Model    string `json:"model"`
-	Messages []struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	} `json:"messages"`
-	Stream         bool `json:"stream"`
-	GrokCookies    any  `json:"grokCookies,omitempty"`
-	CookieIndex    uint `json:"cookieIndex,omitempty"`
-	EnableSearch   int  `json:"enableSearch,omitempty"`
-	LongTxt        int  `json:"longTxt,omitempty"`
-	KeepChat       int  `json:"keepChat,omitempty"`
-	IgnoreThinking int  `json:"ignoreThinking,omitempty"`
-}
-
-// OpenAIChatCompletionMessage 定义 OpenAI 响应的消息结构。
-type OpenAIChatCompletionMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// OpenAIChatCompletionChunkChoice 定义流式响应中的选择结构。
-type OpenAIChatCompletionChunkChoice struct {
-	Index        int                         `json:"index"`
-	Delta        OpenAIChatCompletionMessage `json:"delta"`
-	FinishReason string                      `json:"finish_reason"`
-}
-
-// OpenAIChatCompletionChunk 表示流式响应格式。
-type OpenAIChatCompletionChunk struct {
-	ID      string                            `json:"id"`
-	Object  string                            `json:"object"`
-	Created int64                             `json:"created"`
-	Model   string                            `json:"model"`
-	Choices []OpenAIChatCompletionChunkChoice `json:"choices"`
-}
-
-// OpenAIChatCompletionChoice 定义完整响应中的选择结构。
-type OpenAIChatCompletionChoice struct {
-	Index        int                         `json:"index"`
-	Message      OpenAIChatCompletionMessage `json:"message"`
-	FinishReason string                      `json:"finish_reason"`
-}
-
-// OpenAIChatCompletionUsage 跟踪令牌使用情况。
-type OpenAIChatCompletionUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}
-
-// OpenAIChatCompletion 表示非流式响应格式。
-type OpenAIChatCompletion struct {
-	ID      string                       `json:"id"`
-	Object  string                       `json:"object"`
-	Created int64                        `json:"created"`
-	Model   string                       `json:"model"`
-	Choices []OpenAIChatCompletionChoice `json:"choices"`
-	Usage   OpenAIChatCompletionUsage    `json:"usage"`
 }
 
 // ModelData 表示 OpenAI 兼容响应的模型元数据。
@@ -160,191 +160,121 @@ type ModelList struct {
 	Data   []ModelData `json:"data"`
 }
 
+// UploadFileRequest 表示上传文件的请求结构体。
+type UploadFileRequest struct {
+	Content      string `json:"content"`
+	FileMimeType string `json:"fileMimeType"`
+	FileName     string `json:"fileName"`
+}
+
+// UploadFileResponse 表示上传文件的响应结构体。
+type UploadFileResponse struct {
+	FileMetadataId string `json:"fileMetadataId"`
+}
+
 const (
-	newChatUrl              = "https://grok.com/rest/app-chat/conversations/new" // 新会话端点
-	uploadFileUrl           = "https://grok.com/rest/app-chat/upload-file"       // 文件上传端点
-	completionsPath         = "/v1/chat/completions"                             // 聊天完成端点
-	listModelsPath          = "/v1/models"                                       // 模型列表端点
-	grok3ModelName          = "grok-3"                                           // 标准模型名称
-	grok3ReasoningModelName = "grok-3-reasoning"                                 // 推理模型名称
+	newChatUrl              = "https://grok.com/rest/app-chat/conversations/new"                                     // 新建对话的端点
+	uploadFileUrl           = "https://grok.com/rest/app-chat/upload-file"                                           // 上传文件的端点
+	grok3ModelName          = "grok-3"                                                                               // Grok 3 模型名称
+	grok3ReasoningModelName = "grok-3-reasoning"                                                                     // Grok 3 推理模型名称
+	completionsPath         = "/v1/chat/completions"                                                                 // 聊天完成端点
+	listModelsPath          = "/v1/models"                                                                           // 模型列表端点
+	messageCharLimit        = 40000                                                                                  // 消息字符限制
+	defaultBeforePromptText = "对于以下数据，'system' 表示系统信息，'assistant' 表示您之前发送的消息，'user' 表示用户发送的消息。您需要根据相应数据回复用户的最后一条消息。" // 默认提示前缀
 )
 
 // 全局配置变量
 var (
-	apiToken        *string
-	grokCookies     []string
-	keepChat        *bool
-	ignoreThinking  *bool
-	longTxt         *bool
-	httpProxy       *string
-	cookiesDir      *string
-	httpClient      = &http.Client{Timeout: 30 * time.Minute}
-	nextCookieIndex = struct {
+	apiToken         *string
+	grokCookies      []string
+	textBeforePrompt *string
+	textAfterPrompt  *string
+	keepChat         *bool
+	ignoreThinking   *bool
+	longTxt          *bool
+	httpProxy        *string
+	cookiesDir       *string
+	httpClient       = &http.Client{Timeout: 30 * time.Minute}
+	nextCookieIndex  = struct {
 		sync.Mutex
 		index uint
 	}{}
 )
 
-// uploadFile 通过 API 上传内容并返回文件 ID。
-func (c *GrokClient) uploadFile(content string) (string, error) {
-	payload := UploadFileRequest{
-		Content:      base64.StdEncoding.EncodeToString([]byte(content)),
-		FileMimeType: "text/plain",
-		FileName:     fmt.Sprintf("message-%s.txt", uuid.New().String()),
-	}
-	resp, err := c.doRequest(http.MethodPost, uploadFileUrl, payload)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("读取上传响应失败: %v", err)
-	}
-	var uploadResp UploadFileResponse
-	if err := json.Unmarshal(body, &uploadResp); err != nil || uploadResp.FileMetadataId == "" {
-		return "", fmt.Errorf("无效的上传响应: %s", string(body))
-	}
-	return uploadResp.FileMetadataId, nil
-}
-
-// createLocalFile 创建临时本地文件并返回其路径。
-func (c *GrokClient) createLocalFile(content string) (string, error) {
-	fileName := fmt.Sprintf("temp-%s.txt", uuid.New().String())
-	tempFile, err := os.Create(fileName)
-	if err != nil {
-		return "", fmt.Errorf("创建文件失败: %v", err)
-	}
-	defer tempFile.Close()
-	if _, err := tempFile.WriteString(content); err != nil {
-		return "", fmt.Errorf("写入文件失败: %v", err)
-	}
-	return fileName, nil
-}
-
-// createMessagesAttachment 创建包含消息历史的文本文件。
-func (c *GrokClient) createMessagesAttachment(messages []struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}) (string, error) {
-	var builder strings.Builder
-	for _, msg := range messages {
-		builder.WriteString(fmt.Sprintf("[%s]\n%s\n\n", msg.Role, msg.Content))
-	}
-
-	fileName := fmt.Sprintf("messages-%s.txt", uuid.New().String())
-	tempFile, err := os.Create(fileName)
-	if err != nil {
-		return "", fmt.Errorf("创建文件失败: %v", err)
-	}
-	defer tempFile.Close()
-
-	if _, err := tempFile.WriteString(builder.String()); err != nil {
-		return "", fmt.Errorf("写入文件失败: %v", err)
-	}
-	return fileName, nil
-}
-
-// preparePayload 构建 API 请求的有效负载。
-func (c *GrokClient) preparePayload(message string, fileAttachments []string) map[string]any {
-	return map[string]any{
-		"message":         message,
-		"modelName":       "grok-3",
-		"isReasoning":     c.isReasoning,
-		"temporary":       !c.keepChat,
-		"fileAttachments": fileAttachments,
-		"toolOverrides":   map[string]any{"webSearch": c.enableSearch},
-	}
-}
-
 // doRequest 发送 HTTP 请求并返回响应。
 func (c *GrokClient) doRequest(method, url string, payload any) (*http.Response, error) {
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("序列化有效负载失败: %v", err)
+		return nil, fmt.Errorf("序列化请求负载失败: %v", err)
 	}
+
 	req, err := http.NewRequest(method, url, bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
+
 	for key, value := range c.headers {
 		req.Header.Set(key, value)
 	}
+
 	resp, err := c.httpClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		if err == nil {
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			return nil, fmt.Errorf("API 错误: %d %s, 响应体: %s", resp.StatusCode, resp.Status, string(body))
-		}
-		return nil, fmt.Errorf("请求失败: %v", err)
+	if err != nil {
+		return nil, fmt.Errorf("发送请求失败: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Grok API 错误: %d %s, 响应体: %s", resp.StatusCode, resp.Status, string(body))
 	}
 	return resp, nil
 }
 
-// sendMessage 发送消息到 Grok 3 Web API，支持自动文件处理和容错切换。
-func (c *GrokClient) sendMessage(messages []struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}, stream bool) (io.ReadCloser, error) {
-	var fileAttachments []string
-	messageBuf := bytes.NewBuffer([]byte{})
-	jsonEncoder := json.NewEncoder(messageBuf)
-	jsonEncoder.SetEscapeHTML(false)
-	if err := jsonEncoder.Encode(messages); err != nil {
-		return nil, fmt.Errorf("消息编码失败: %v", err)
+// uploadMessageAsFile 将消息上传为文件并返回文件 ID。
+func (c *GrokClient) uploadMessageAsFile(message string) (*UploadFileResponse, error) {
+	content := base64.StdEncoding.EncodeToString([]byte(message))
+	payload := UploadFileRequest{
+		Content:      content,
+		FileMimeType: "text/plain",
+		FileName:     uuid.New().String() + ".txt",
 	}
-	message := messageBuf.String()
+	log.Println("正在将消息上传为文件")
+	resp, err := c.doRequest(http.MethodPost, uploadFileUrl, payload)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("上传文件错误: %d %s", resp.StatusCode, resp.Status)
+	}
+	response := &UploadFileResponse{}
+	err = json.Unmarshal(body, response)
+	if err != nil || response.FileMetadataId == "" {
+		return nil, fmt.Errorf("解析 JSON 错误或 FileMetadataId 为空: %s", string(body))
+	}
+	return response, nil
+}
 
-	if c.longTxt && len(messages) > 0 {
-		charCount := utf8.RuneCountInString(message)
-		var fileId string
-		var err error
-
-		if charCount >= c.messageLimit {
-			// 首先尝试 API 上传（适用于大消息）
-			fileContent, _ := c.createMessagesAttachment(messages) // 格式化消息历史
-			fileId, err = c.uploadFile(fileContent)
-			if err != nil {
-				log.Printf("API 上传失败: %v，尝试本地文件创建", err)
-				// 切换到本地文件创建
-				fileId, err = c.createMessagesAttachment(messages)
-				if err != nil {
-					return nil, fmt.Errorf("本地文件创建失败: %v（API 上传也已失败）", err)
-				}
-				defer os.Remove(fileId) // 确保清理本地文件
-			} else {
-				// API 上传成功，调整消息内容
-				message = "请按照附件中的说明进行回复。"
-			}
-		} else if charCount > 0 {
-			// 首先尝试本地文件创建（适用于小消息）
-			fileId, err = c.createMessagesAttachment(messages)
-			if err != nil {
-				log.Printf("本地文件创建失败: %v，尝试 API 上传", err)
-				// 切换到 API 上传
-				fileContent, _ := c.createMessagesAttachment(messages)
-				fileId, err = c.uploadFile(fileContent)
-				if err != nil {
-					return nil, fmt.Errorf("API 上传失败: %v（本地文件创建也已失败）", err)
-				}
-				message = "请按照附件中的说明进行回复。"
-			} else {
-				defer os.Remove(fileId) // 确保清理本地文件
-			}
+// sendMessage 向 Grok 3 Web API 发送消息并返回响应体。
+// 如果 stream 为 true，则返回流式响应；否则读取完整响应。
+func (c *GrokClient) sendMessage(message string, stream bool) (io.ReadCloser, error) {
+	fileId := ""
+	// 检查是否需要将消息上传为文件
+	if c.uploadMessage || (len(message) > messageCharLimit && utf8.RuneCountInString(message) > messageCharLimit) {
+		uploadResp, err := c.uploadMessageAsFile(message)
+		if err != nil {
+			return nil, err
 		}
-
-		if fileId != "" {
-			fileAttachments = append(fileAttachments, fileId)
-		}
+		fileId = uploadResp.FileMetadataId
+		message = "请按照附件中的说明进行回复。"
 	}
 
-	payload := c.preparePayload(message, fileAttachments)
+	payload := c.preparePayload(message, fileId)
 	resp, err := c.doRequest(http.MethodPost, newChatUrl, payload)
 	if err != nil {
 		return nil, err
 	}
+
 	if stream {
 		return resp.Body, nil
 	}
@@ -389,8 +319,54 @@ func (c *GrokClient) parseGrok3StreamingJson(stream io.Reader, handler func(resp
 	}
 }
 
-// CreateOpenAIStreamingResponse 将 Grok 3 流式响应转换为 OpenAI 格式。
-func (c *GrokClient) CreateOpenAIStreamingResponse(grokStream io.Reader) http.HandlerFunc {
+// OpenAIChatCompletionMessage 定义 OpenAI 响应的消息结构。
+type OpenAIChatCompletionMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// OpenAIChatCompletionChunkChoice 定义流式响应中的选择结构。
+type OpenAIChatCompletionChunkChoice struct {
+	Index        int                         `json:"index"`
+	Delta        OpenAIChatCompletionMessage `json:"delta"`
+	FinishReason string                      `json:"finish_reason"`
+}
+
+// OpenAIChatCompletionChunk 表示 OpenAI 的流式响应格式。
+type OpenAIChatCompletionChunk struct {
+	ID      string                            `json:"id"`
+	Object  string                            `json:"object"`
+	Created int64                             `json:"created"`
+	Model   string                            `json:"model"`
+	Choices []OpenAIChatCompletionChunkChoice `json:"choices"`
+}
+
+// OpenAIChatCompletionChoice 定义完整响应中的选择结构。
+type OpenAIChatCompletionChoice struct {
+	Index        int                         `json:"index"`
+	Message      OpenAIChatCompletionMessage `json:"message"`
+	FinishReason string                      `json:"finish_reason"`
+}
+
+// OpenAIChatCompletionUsage 跟踪令牌使用情况。
+type OpenAIChatCompletionUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+// OpenAIChatCompletion 表示 OpenAI 的非流式响应格式。
+type OpenAIChatCompletion struct {
+	ID      string                       `json:"id"`
+	Object  string                       `json:"object"`
+	Created int64                        `json:"created"`
+	Model   string                       `json:"model"`
+	Choices []OpenAIChatCompletionChoice `json:"choices"`
+	Usage   OpenAIChatCompletionUsage    `json:"usage"`
+}
+
+// createOpenAIStreamingResponse 返回一个 HTTP 处理函数，将 Grok 3 的流式响应转换为 OpenAI 格式。
+func (c *GrokClient) createOpenAIStreamingResponse(grokStream io.Reader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -398,21 +374,17 @@ func (c *GrokClient) CreateOpenAIStreamingResponse(grokStream io.Reader) http.Ha
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
+			log.Println("流式传输不支持")
 			http.Error(w, "流式传输不支持", http.StatusInternalServerError)
 			return
 		}
 
 		completionID := "chatcmpl-" + uuid.New().String()
-		modelName := grok3ModelName
-		if c.isReasoning {
-			modelName = grok3ReasoningModelName
-		}
-
 		startChunk := OpenAIChatCompletionChunk{
 			ID:      completionID,
 			Object:  "chat.completion.chunk",
 			Created: time.Now().Unix(),
-			Model:   modelName,
+			Model:   c.getModelName(),
 			Choices: []OpenAIChatCompletionChunkChoice{
 				{Index: 0, Delta: OpenAIChatCompletionMessage{Role: "assistant"}, FinishReason: ""},
 			},
@@ -425,7 +397,7 @@ func (c *GrokClient) CreateOpenAIStreamingResponse(grokStream io.Reader) http.Ha
 				ID:      completionID,
 				Object:  "chat.completion.chunk",
 				Created: time.Now().Unix(),
-				Model:   modelName,
+				Model:   c.getModelName(),
 				Choices: []OpenAIChatCompletionChunkChoice{
 					{Index: 0, Delta: OpenAIChatCompletionMessage{Content: respToken}, FinishReason: ""},
 				},
@@ -438,7 +410,7 @@ func (c *GrokClient) CreateOpenAIStreamingResponse(grokStream io.Reader) http.Ha
 			ID:      completionID,
 			Object:  "chat.completion.chunk",
 			Created: time.Now().Unix(),
-			Model:   modelName,
+			Model:   c.getModelName(),
 			Choices: []OpenAIChatCompletionChunkChoice{
 				{Index: 0, Delta: OpenAIChatCompletionMessage{}, FinishReason: "stop"},
 			},
@@ -451,42 +423,42 @@ func (c *GrokClient) CreateOpenAIStreamingResponse(grokStream io.Reader) http.Ha
 	}
 }
 
-// CreateOpenAIFullResponse 将 Grok 3 完整响应转换为 OpenAI 格式。
-func (c *GrokClient) CreateOpenAIFullResponse(grokFull io.Reader) http.HandlerFunc {
+// createOpenAIFullResponse 返回一个 HTTP 处理函数，将完整的 Grok 3 响应转换为 OpenAI 格式。
+func (c *GrokClient) createOpenAIFullResponse(grokFull io.Reader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var fullResponse strings.Builder
 		c.parseGrok3StreamingJson(grokFull, func(respToken string) {
 			fullResponse.WriteString(respToken)
 		})
 
-		modelName := grok3ModelName
-		if c.isReasoning {
-			modelName = grok3ReasoningModelName
-		}
-
-		response := OpenAIChatCompletion{
-			ID:      "chatcmpl-" + uuid.New().String(),
-			Object:  "chat.completion",
-			Created: time.Now().Unix(),
-			Model:   modelName,
-			Choices: []OpenAIChatCompletionChoice{
-				{
-					Index:        0,
-					Message:      OpenAIChatCompletionMessage{Role: "assistant", Content: fullResponse.String()},
-					FinishReason: "stop",
-				},
-			},
-			Usage: OpenAIChatCompletionUsage{PromptTokens: -1, CompletionTokens: -1, TotalTokens: -1},
-		}
-
+		openAIResponse := c.createOpenAIFullResponseBody(fullResponse.String())
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(response); err != nil {
+		if err := json.NewEncoder(w).Encode(openAIResponse); err != nil {
+			log.Printf("编码响应错误: %v", err)
 			http.Error(w, fmt.Sprintf("编码响应错误: %v", err), http.StatusInternalServerError)
 		}
 	}
 }
 
-// mustMarshal 将值序列化为 JSON，失败时抛出异常。
+// createOpenAIFullResponseBody 创建非流式请求的 OpenAI 响应体。
+func (c *GrokClient) createOpenAIFullResponseBody(content string) OpenAIChatCompletion {
+	return OpenAIChatCompletion{
+		ID:      "chatcmpl-" + uuid.New().String(),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   c.getModelName(),
+		Choices: []OpenAIChatCompletionChoice{
+			{
+				Index:        0,
+				Message:      OpenAIChatCompletionMessage{Role: "assistant", Content: content},
+				FinishReason: "stop",
+			},
+		},
+		Usage: OpenAIChatCompletionUsage{PromptTokens: -1, CompletionTokens: -1, TotalTokens: -1},
+	}
+}
+
+// mustMarshal 将值序列化为 JSON 字符串，若出错则 panic。
 func mustMarshal(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -495,7 +467,7 @@ func mustMarshal(v any) string {
 	return string(b)
 }
 
-// getCookieIndex 以轮询方式选择下一个 Cookie 索引。
+// getCookieIndex 以轮询方式选择下一个 cookie 索引。
 func getCookieIndex(len int, cookieIndex uint) uint {
 	if cookieIndex == 0 || cookieIndex > uint(len) {
 		nextCookieIndex.Lock()
@@ -503,15 +475,14 @@ func getCookieIndex(len int, cookieIndex uint) uint {
 		index := nextCookieIndex.index
 		nextCookieIndex.index = (nextCookieIndex.index + 1) % uint(len)
 		return index % uint(len)
-	} else {
-		return cookieIndex - 1
 	}
+	return cookieIndex - 1
 }
 
-// loadCookiesFromDir 从指定目录加载 Cookie。
+// loadCookiesFromDir 从指定目录加载 cookies。
 func loadCookiesFromDir(dir string) error {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return fmt.Errorf("Cookie 目录不存在: %s", dir)
+		return fmt.Errorf("cookie 目录不存在: %s", dir)
 	}
 
 	files, err := os.ReadDir(dir)
@@ -525,13 +496,13 @@ func loadCookiesFromDir(dir string) error {
 			filePath := filepath.Join(dir, file.Name())
 			content, err := os.ReadFile(filePath)
 			if err != nil {
-				log.Printf("警告: 读取 Cookie 文件 %s 失败: %v", filePath, err)
+				log.Printf("警告: 读取 cookie 文件 %s 失败: %v", filePath, err)
 				continue
 			}
 			cookie := strings.TrimSpace(string(content))
 			if cookie != "" {
 				grokCookies = append(grokCookies, cookie)
-				log.Printf("从 %s 加载 Cookie", filePath)
+				log.Printf("从 %s 加载 cookie", filePath)
 			}
 		}
 	}
@@ -542,7 +513,7 @@ func loadCookiesFromDir(dir string) error {
 func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	log.Printf("来自 %s 的请求，路径: %s", r.RemoteAddr, completionsPath)
 
-	if r.Method != http.MethodPost || r.URL.Path != completionsPath {
+	if r.URL.Path != completionsPath || r.Method != http.MethodPost {
 		log.Printf("无效请求: 方法 %s, 路径 %s", r.Method, r.URL.Path)
 		http.Error(w, "方法不允许或路径未找到", http.StatusMethodNotAllowed)
 		return
@@ -575,7 +546,6 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 选择 Cookie
 	var cookie string
 	var cookieIndex uint
 	if body.GrokCookies != nil {
@@ -597,25 +567,45 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 	cookie = strings.TrimSpace(cookie)
 	if cookie == "" {
-		log.Println("错误: 无 Grok 3 Cookie")
-		http.Error(w, "错误: 无 Grok 3 Cookie", http.StatusBadRequest)
+		log.Println("错误: 无 Grok 3 cookie")
+		http.Error(w, "错误: 无 Grok 3 cookie", http.StatusBadRequest)
 		return
 	}
 
-	// 使用请求体覆盖默认配置
+	var beforePromptText, afterPromptText string
+	if body.TextBeforePrompt != "" {
+		beforePromptText = body.TextBeforePrompt
+	} else {
+		beforePromptText = *textBeforePrompt
+	}
+	if body.TextAfterPrompt != "" {
+		afterPromptText = body.TextAfterPrompt
+	} else {
+		afterPromptText = *textAfterPrompt
+	}
+
+	var messageBuilder strings.Builder
+	fmt.Fprintln(&messageBuilder, beforePromptText)
+	for _, msg := range body.Messages {
+		fmt.Fprintf(&messageBuilder, "\n[[%s]]\n", msg.Role)
+		messageBuilder.WriteString(msg.Content)
+	}
+	fmt.Fprintf(&messageBuilder, "\n%s", afterPromptText)
+
 	isReasoning := strings.TrimSpace(body.Model) == grok3ReasoningModelName
 	enableSearch := body.EnableSearch > 0
-	keepChatVal := *keepChat
+	uploadMessage := body.UploadMessage > 0
+	keepConversation := *keepChat
 	if body.KeepChat > 0 {
-		keepChatVal = true
+		keepConversation = true
 	} else if body.KeepChat == 0 {
-		keepChatVal = false
+		keepConversation = false
 	}
-	ignoreThinkingVal := *ignoreThinking
+	ignoreThink := *ignoreThinking
 	if body.IgnoreThinking > 0 {
-		ignoreThinkingVal = true
+		ignoreThink = true
 	} else if body.IgnoreThinking == 0 {
-		ignoreThinkingVal = false
+		ignoreThink = false
 	}
 	longTxtVal := *longTxt
 	if body.LongTxt > 0 {
@@ -624,10 +614,10 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		longTxtVal = false
 	}
 
-	client := NewGrokClient(cookie, isReasoning, enableSearch, keepChatVal, ignoreThinkingVal, longTxtVal)
-	log.Printf("使用索引 %d 的 Cookie 请求 Grok 3 Web API", cookieIndex+1)
+	grokClient := NewGrokClient(cookie, isReasoning, enableSearch, uploadMessage, keepConversation, ignoreThink, longTxtVal)
+	log.Printf("使用索引 %d 的 cookie 请求 Grok 3 Web API", cookieIndex+1)
 
-	respReader, err := client.sendMessage(body.Messages, body.Stream)
+	respReader, err := grokClient.sendMessage(messageBuilder.String(), body.Stream)
 	if err != nil {
 		log.Printf("错误: %v", err)
 		http.Error(w, fmt.Sprintf("错误: %v", err), http.StatusInternalServerError)
@@ -636,17 +626,17 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	defer respReader.Close()
 
 	if body.Stream {
-		client.CreateOpenAIStreamingResponse(respReader)(w, r)
+		grokClient.createOpenAIStreamingResponse(respReader)(w, r)
 	} else {
-		client.CreateOpenAIFullResponse(respReader)(w, r)
+		grokClient.createOpenAIFullResponse(respReader)(w, r)
 	}
 }
 
-// listModels 处理 /v1/models 的 GET 请求。
+// listModels 处理 /v1/models 的 GET 请求，返回可用模型列表。
 func listModels(w http.ResponseWriter, r *http.Request) {
 	log.Printf("来自 %s 的请求，路径: %s", r.RemoteAddr, listModelsPath)
 
-	if r.Method != http.MethodGet || r.URL.Path != listModelsPath {
+	if r.URL.Path != listModelsPath || r.Method != http.MethodGet {
 		log.Printf("无效请求: 方法 %s, 路径 %s", r.Method, r.URL.Path)
 		http.Error(w, "方法不允许或路径未找到", http.StatusNotFound)
 		return
@@ -667,14 +657,16 @@ func listModels(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// main 设置 HTTP 服务器并开始监听。
+// main 解析命令行标志，设置 HTTP 服务器并开始监听请求。
 func main() {
 	apiToken = flag.String("token", "", "认证令牌 (GROK3_AUTH_TOKEN)")
-	cookie := flag.String("cookie", "", "Grok Cookie (GROK3_COOKIE)")
+	cookie := flag.String("cookie", "", "Grok cookie (GROK3_COOKIE)")
 	cookiesDir = flag.String("cookiesDir", "cookies", "包含 cookie.txt 文件的目录")
-	longTxt = flag.Bool("longtxt", false, "启用长文本处理并自动选择上传方法")
+	textBeforePrompt = flag.String("textBeforePrompt", defaultBeforePromptText, "提示前缀文本")
+	textAfterPrompt = flag.String("textAfterPrompt", "", "提示后缀文本")
 	keepChat = flag.Bool("keepChat", false, "保留聊天会话")
 	ignoreThinking = flag.Bool("ignoreThinking", false, "忽略思考内容")
+	longTxt = flag.Bool("longtxt", false, "启用长文本处理（仅标志，未在 sendMessage 中实现）")
 	httpProxy = flag.String("httpProxy", "", "HTTP/SOCKS5 代理")
 	port := flag.Uint("port", 8180, "服务器端口")
 	flag.Parse()
@@ -705,10 +697,10 @@ func main() {
 	if len(grokCookies) == 0 {
 		err := loadCookiesFromDir(*cookiesDir)
 		if err != nil {
-			log.Printf("警告: 从目录 %s 加载 Cookie 失败: %v", *cookiesDir, err)
+			log.Printf("警告: 从目录 %s 加载 cookie 失败: %v", *cookiesDir, err)
 		}
 		if len(grokCookies) == 0 {
-			log.Fatal("未找到有效 Cookie")
+			log.Fatal("未找到有效 cookie")
 		}
 	}
 
@@ -734,6 +726,6 @@ func main() {
 
 	http.HandleFunc(completionsPath, handleChatCompletion)
 	http.HandleFunc(listModelsPath, listModels)
-	log.Printf("服务器启动于 :%d，长文本处理: %v，已加载 Cookie 数量: %d", *port, *longTxt, len(grokCookies))
+	log.Printf("服务器启动于 :%d，长文本处理: %v，已加载 cookie 数量: %d", *port, *longTxt, len(grokCookies))
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), nil))
 }
