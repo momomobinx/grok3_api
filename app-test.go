@@ -194,6 +194,12 @@ var (
 		sync.Mutex
 		index uint
 	}{}
+	cookieStatus = struct {
+		sync.Mutex
+		status map[string]bool // true 表示有效，false 表示失效
+	}{
+		status: make(map[string]bool),
+	}
 )
 
 // doRequest 发送 HTTP 请求并返回响应。
@@ -460,16 +466,39 @@ func mustMarshal(v any) string {
 	return string(b)
 }
 
-// getCookieIndex 以轮询方式选择下一个 cookie 索引。
-func getCookieIndex(len int, cookieIndex uint) uint {
-	if cookieIndex == 0 || cookieIndex > uint(len) {
-		nextCookieIndex.Lock()
-		defer nextCookieIndex.Unlock()
-		index := nextCookieIndex.index
-		nextCookieIndex.index = (nextCookieIndex.index + 1) % uint(len)
-		return index % uint(len)
+// getCookieIndex 返回下一个有效的 cookie 索引
+func getCookieIndex(cookies []string, currentIndex uint) uint {
+	cookieStatus.Lock()
+	defer cookieStatus.Unlock()
+
+	// 检查是否所有 cookie 都失效
+	allInvalid := true
+	for _, ck := range cookies {
+		if cookieStatus.status[ck] {
+			allInvalid = false
+			break
+		}
 	}
-	return cookieIndex - 1
+	if allInvalid {
+		log.Println("所有 cookie 已失效，重置状态并重新轮询")
+		for _, ck := range cookies {
+			cookieStatus.status[ck] = true // 重置所有 cookie 为有效
+		}
+	}
+
+	// 寻找下一个有效 cookie
+	maxAttempts := len(cookies)
+	attempts := 0
+	index := currentIndex % uint(len(cookies))
+	for attempts < maxAttempts {
+		if cookieStatus.status[cookies[index]] {
+			return index
+		}
+		index = (index + 1) % uint(len(cookies))
+		attempts++
+	}
+	// 如果没有有效 cookie（理论上不会发生，因为上面已重置），返回 0
+	return 0
 }
 
 // loadCookiesFromDir 从指定目录加载 cookies。
@@ -546,7 +575,7 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			cookie = ck
 		} else if list, ok := body.GrokCookies.([]any); ok {
 			if len(list) > 0 {
-				cookieIndex = getCookieIndex(len(list), body.CookieIndex)
+				cookieIndex = getCookieIndex(list, body.CookieIndex)
 				if ck, ok := list[cookieIndex].(string); ok {
 					cookie = ck
 				}
@@ -555,7 +584,7 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 	cookie = strings.TrimSpace(cookie)
 	if cookie == "" && len(grokCookies) > 0 {
-		cookieIndex = getCookieIndex(len(grokCookies), body.CookieIndex)
+		cookieIndex = getCookieIndex(grokCookies, body.CookieIndex)
 		cookie = grokCookies[cookieIndex]
 	}
 	cookie = strings.TrimSpace(cookie)
@@ -606,9 +635,22 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	respReader, err := grokClient.sendMessage(messageBuilder.String(), body.Stream)
 	if err != nil {
-		log.Printf("错误: %v", err)
-		http.Error(w, fmt.Sprintf("错误: %v", err), http.StatusInternalServerError)
-		return
+		cookieStatus.Lock()
+		cookieStatus.status[cookie] = false
+		log.Printf("Cookie %d 报错，已标记为失效，原因: %v", cookieIndex+1, err)
+		cookieStatus.Unlock()
+
+		cookieIndex = getCookieIndex(grokCookies, cookieIndex+1)
+		cookie = grokCookies[cookieIndex]
+		grokClient = NewGrokClient(cookie, isReasoning, enableSearch, uploadMessage, keepConversation, ignoreThink)
+		log.Printf("切换到索引 %d 的 cookie 重试", cookieIndex+1)
+
+		respReader, err = grokClient.sendMessage(messageBuilder.String(), body.Stream)
+		if err != nil {
+			log.Printf("重试失败: %v", err)
+			http.Error(w, fmt.Sprintf("错误: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 	defer respReader.Close()
 
@@ -675,9 +717,23 @@ func main() {
 		*cookie = strings.TrimSpace(os.Getenv("GROK3_COOKIE"))
 	}
 	if *cookie != "" {
+		// 先尝试解析为 JSON
 		err := json.Unmarshal([]byte(*cookie), &grokCookies)
 		if err != nil {
-			grokCookies = []string{*cookie}
+			// 如果不是 JSON，尝试按逗号分割
+			if strings.Contains(*cookie, ",") {
+				cookieList := strings.Split(*cookie, ",")
+				grokCookies = make([]string, 0, len(cookieList))
+				for _, c := range cookieList {
+					c = strings.TrimSpace(c)
+					if c != "" {
+						grokCookies = append(grokCookies, c)
+					}
+				}
+			} else {
+				// 单个 cookie
+				grokCookies = []string{*cookie}
+			}
 		}
 	}
 
@@ -690,6 +746,13 @@ func main() {
 		if len(grokCookies) == 0 {
 			log.Fatal("未找到有效 cookie")
 		}
+	}
+
+	// 初始化 cookieStatus
+	for _, ck := range grokCookies {
+		cookieStatus.Lock()
+		cookieStatus.status[ck] = true
+		cookieStatus.Unlock()
 	}
 
 	*httpProxy = strings.TrimSpace(*httpProxy)
