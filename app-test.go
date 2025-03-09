@@ -188,8 +188,8 @@ var (
 	httpProxy        *string
 	cookiesDir       *string
 	httpClient       = &http.Client{Timeout: 30 * time.Minute}
-	cookie           *string // 修复：添加全局 cookie 变量
-	port             *uint   // 修复：添加全局 port 变量
+	cookie           *string
+	port             *uint
 	nextCookieIndex  = struct {
 		sync.Mutex
 		index uint
@@ -575,9 +575,18 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			cookie = ck
 		} else if list, ok := body.GrokCookies.([]any); ok {
 			if len(list) > 0 {
-				cookieIndex = getCookieIndex(list, body.CookieIndex)
-				if ck, ok := list[cookieIndex].(string); ok {
-					cookie = ck
+				// 将 []any 转换为 []string
+				cookieList := make([]string, 0, len(list))
+				for _, item := range list {
+					if str, ok := item.(string); ok {
+						cookieList = append(cookieList, str)
+					} else {
+						log.Printf("警告: GrokCookies 列表中包含非字符串元素: %v", item)
+					}
+				}
+				if len(cookieList) > 0 {
+					cookieIndex = getCookieIndex(cookieList, body.CookieIndex)
+					cookie = cookieList[cookieIndex]
 				}
 			}
 		}
