@@ -29,13 +29,10 @@ type GrokClient struct {
 	uploadMessage  bool              // 是否将消息上传为文件
 	keepChat       bool              // 是否保留聊天历史
 	ignoreThinking bool              // 是否忽略思考令牌
-	longTxt        bool              // 是否启用长文本处理（仅为兼容性保留，未在 sendMessage 中使用）
-	messageLimit   int               // 消息字符限制（默认 40000）
-	httpClient     *http.Client      // 可自定义的 HTTP 客户端
 }
 
 // NewGrokClient 创建一个新的 GrokClient 实例。
-func NewGrokClient(cookie string, isReasoning, enableSearch, uploadMessage, keepChat, ignoreThinking, longTxt bool) *GrokClient {
+func NewGrokClient(cookie string, isReasoning, enableSearch, uploadMessage, keepChat, ignoreThinking bool) *GrokClient {
 	return &GrokClient{
 		headers: map[string]string{
 			"accept":             "*/*",
@@ -59,13 +56,10 @@ func NewGrokClient(cookie string, isReasoning, enableSearch, uploadMessage, keep
 		uploadMessage:  uploadMessage,
 		keepChat:       keepChat,
 		ignoreThinking: ignoreThinking,
-		longTxt:        longTxt,
-		messageLimit:   40000,
-		httpClient:     &http.Client{Timeout: 30 * time.Minute},
 	}
 }
 
-// ToolOverrides 定义了工具覆盖选项，用于 API 请求负载。
+// ToolOverrides 定义工具覆盖选项。
 type ToolOverrides struct {
 	ImageGen     bool `json:"imageGen"`
 	TrendsSearch bool `json:"trendsSearch"`
@@ -79,7 +73,7 @@ type ToolOverrides struct {
 func (c *GrokClient) preparePayload(message string, fileId string) map[string]any {
 	var toolOverrides any = ToolOverrides{}
 	if c.enableSearch {
-		toolOverrides = map[string]any{"webSearch": true}
+		toolOverrides = map[string]any{}
 	}
 
 	fileAttachments := []string{}
@@ -110,7 +104,7 @@ func (c *GrokClient) preparePayload(message string, fileId string) map[string]an
 	}
 }
 
-// getModelName 根据 isReasoning 标志返回适当的模型名称。
+// getModelName 根据 isReasoning 标志返回模型名称。
 func (c *GrokClient) getModelName() string {
 	if c.isReasoning {
 		return grok3ReasoningModelName
@@ -134,7 +128,6 @@ type RequestBody struct {
 	TextAfterPrompt  string `json:"textAfterPrompt,omitempty"`
 	KeepChat         int    `json:"keepChat,omitempty"`
 	IgnoreThinking   int    `json:"ignoreThinking,omitempty"`
-	LongTxt          int    `json:"longTxt,omitempty"`
 }
 
 // ResponseToken 表示 Grok 3 Web API 的单个令牌响应。
@@ -173,14 +166,14 @@ type UploadFileResponse struct {
 }
 
 const (
-	newChatUrl              = "https://grok.com/rest/app-chat/conversations/new"                                     // 新建对话的端点
-	uploadFileUrl           = "https://grok.com/rest/app-chat/upload-file"                                           // 上传文件的端点
-	grok3ModelName          = "grok-3"                                                                               // Grok 3 模型名称
-	grok3ReasoningModelName = "grok-3-reasoning"                                                                     // Grok 3 推理模型名称
-	completionsPath         = "/v1/chat/completions"                                                                 // 聊天完成端点
-	listModelsPath          = "/v1/models"                                                                           // 模型列表端点
-	messageCharLimit        = 40000                                                                                  // 消息字符限制
-	defaultBeforePromptText = "对于以下数据，'system' 表示系统信息，'assistant' 表示您之前发送的消息，'user' 表示用户发送的消息。您需要根据相应数据回复用户的最后一条消息。" // 默认提示前缀
+	newChatUrl              = "https://grok.com/rest/app-chat/conversations/new"
+	uploadFileUrl           = "https://grok.com/rest/app-chat/upload-file"
+	grok3ModelName          = "grok-3"
+	grok3ReasoningModelName = "grok-3-reasoning"
+	completionsPath         = "/v1/chat/completions"
+	listModelsPath          = "/v1/models"
+	messageCharLimit        = 40000
+	defaultBeforePromptText = "For the data below, entries with 'system' are system information, entries with 'assistant' are messages you have previously sent, entries with 'user' are messages sent by the user. You need to respond to the user's last message accordingly based on the corresponding data."
 )
 
 // 全局配置变量
@@ -195,6 +188,8 @@ var (
 	httpProxy        *string
 	cookiesDir       *string
 	httpClient       = &http.Client{Timeout: 30 * time.Minute}
+	cookie           *string // 修复：添加全局 cookie 变量
+	port             *uint   // 修复：添加全局 port 变量
 	nextCookieIndex  = struct {
 		sync.Mutex
 		index uint
@@ -217,7 +212,7 @@ func (c *GrokClient) doRequest(method, url string, payload any) (*http.Response,
 		req.Header.Set(key, value)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("发送请求失败: %v", err)
 	}
@@ -256,10 +251,8 @@ func (c *GrokClient) uploadMessageAsFile(message string) (*UploadFileResponse, e
 }
 
 // sendMessage 向 Grok 3 Web API 发送消息并返回响应体。
-// 如果 stream 为 true，则返回流式响应；否则读取完整响应。
 func (c *GrokClient) sendMessage(message string, stream bool) (io.ReadCloser, error) {
 	fileId := ""
-	// 检查是否需要将消息上传为文件
 	if c.uploadMessage || (len(message) > messageCharLimit && utf8.RuneCountInString(message) > messageCharLimit) {
 		uploadResp, err := c.uploadMessageAsFile(message)
 		if err != nil {
@@ -365,7 +358,7 @@ type OpenAIChatCompletion struct {
 	Usage   OpenAIChatCompletionUsage    `json:"usage"`
 }
 
-// createOpenAIStreamingResponse 返回一个 HTTP 处理函数，将 Grok 3 的流式响应转换为 OpenAI 格式。
+// createOpenAIStreamingResponse 返回流式响应处理函数。
 func (c *GrokClient) createOpenAIStreamingResponse(grokStream io.Reader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -423,7 +416,7 @@ func (c *GrokClient) createOpenAIStreamingResponse(grokStream io.Reader) http.Ha
 	}
 }
 
-// createOpenAIFullResponse 返回一个 HTTP 处理函数，将完整的 Grok 3 响应转换为 OpenAI 格式。
+// createOpenAIFullResponse 返回完整响应处理函数。
 func (c *GrokClient) createOpenAIFullResponse(grokFull io.Reader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var fullResponse strings.Builder
@@ -458,7 +451,7 @@ func (c *GrokClient) createOpenAIFullResponseBody(content string) OpenAIChatComp
 	}
 }
 
-// mustMarshal 将值序列化为 JSON 字符串，若出错则 panic。
+// mustMarshal 将值序列化为 JSON 字符串。
 func mustMarshal(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -607,14 +600,8 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	} else if body.IgnoreThinking == 0 {
 		ignoreThink = false
 	}
-	longTxtVal := *longTxt
-	if body.LongTxt > 0 {
-		longTxtVal = true
-	} else if body.LongTxt == 0 {
-		longTxtVal = false
-	}
 
-	grokClient := NewGrokClient(cookie, isReasoning, enableSearch, uploadMessage, keepConversation, ignoreThink, longTxtVal)
+	grokClient := NewGrokClient(cookie, isReasoning, enableSearch, uploadMessage, keepConversation, ignoreThink)
 	log.Printf("使用索引 %d 的 cookie 请求 Grok 3 Web API", cookieIndex+1)
 
 	respReader, err := grokClient.sendMessage(messageBuilder.String(), body.Stream)
@@ -632,7 +619,7 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// listModels 处理 /v1/models 的 GET 请求，返回可用模型列表。
+// listModels 处理 /v1/models 的 GET 请求。
 func listModels(w http.ResponseWriter, r *http.Request) {
 	log.Printf("来自 %s 的请求，路径: %s", r.RemoteAddr, listModelsPath)
 
@@ -657,10 +644,10 @@ func listModels(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// main 解析命令行标志，设置 HTTP 服务器并开始监听请求。
+// main 解析命令行标志并启动服务器。
 func main() {
 	apiToken = flag.String("token", "", "认证令牌 (GROK3_AUTH_TOKEN)")
-	cookie := flag.String("cookie", "", "Grok cookie (GROK3_COOKIE)")
+	cookie = flag.String("cookie", "", "Grok cookie (GROK3_COOKIE)")
 	cookiesDir = flag.String("cookiesDir", "cookies", "包含 cookie.txt 文件的目录")
 	textBeforePrompt = flag.String("textBeforePrompt", defaultBeforePromptText, "提示前缀文本")
 	textAfterPrompt = flag.String("textAfterPrompt", "", "提示后缀文本")
@@ -668,7 +655,7 @@ func main() {
 	ignoreThinking = flag.Bool("ignoreThinking", false, "忽略思考内容")
 	longTxt = flag.Bool("longtxt", false, "启用长文本处理（仅标志，未在 sendMessage 中实现）")
 	httpProxy = flag.String("httpProxy", "", "HTTP/SOCKS5 代理")
-	port := flag.Uint("port", 8180, "服务器端口")
+	port = flag.Uint("port", 8180, "服务器端口")
 	flag.Parse()
 
 	if *port > 65535 {
@@ -694,6 +681,7 @@ func main() {
 		}
 	}
 
+	// 如果未提供 cookie，则从 cookiesDir 加载
 	if len(grokCookies) == 0 {
 		err := loadCookiesFromDir(*cookiesDir)
 		if err != nil {
@@ -705,22 +693,35 @@ func main() {
 	}
 
 	*httpProxy = strings.TrimSpace(*httpProxy)
+	// 配置全局 httpClient
 	if *httpProxy != "" {
 		proxyURL, err := url.Parse(*httpProxy)
-		if err == nil {
-			httpClient.Transport = &http.Transport{
-				Proxy: http.ProxyURL(proxyURL),
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				ForceAttemptHTTP2:   true,
-				MaxIdleConns:        10,
-				IdleConnTimeout:     600 * time.Second,
-				TLSHandshakeTimeout: 20 * time.Second,
-			}
-		} else {
+		if err != nil {
 			log.Fatalf("解析 HTTP/SOCKS5 代理错误: %v", err)
+		}
+		httpClient.Transport = &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:   true,
+			MaxIdleConns:        10,
+			IdleConnTimeout:     600 * time.Second,
+			TLSHandshakeTimeout: 20 * time.Second,
+		}
+	} else {
+		// 支持系统代理
+		httpClient.Transport = &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:   true,
+			MaxIdleConns:        10,
+			IdleConnTimeout:     600 * time.Second,
+			TLSHandshakeTimeout: 20 * time.Second,
 		}
 	}
 
