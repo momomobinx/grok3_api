@@ -29,7 +29,7 @@
 
 📌 **其他说明**  
 - 其余功能与原项目相同，参考：[grok3_api](https://github.com/orzogc/grok3_api)
-
+- 可能需要添加 -export 变量，供魔法客户端使用
 **安卓用户提示**
 - 启动命令参考（后台启动） `./grok-server -token your-auth-token -cookie xxxxxxx -port 8180 &`
 - 已用`DualStack: false`强制使用IPV4。
