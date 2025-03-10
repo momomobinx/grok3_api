@@ -260,8 +260,8 @@ func (c *GrokClient) uploadMessageAsFile(message string) (*UploadFileResponse, e
 // sendMessage 向 Grok 3 Web API 发送消息并返回响应体。
 func (c *GrokClient) sendMessage(message string, stream bool) (io.ReadCloser, error) {
 	fileId := ""
-	if (c.enableUpload || c.uploadMessage) && utf8.RuneCountInString(message) > 80000 {
-		log.Printf("启用 -longtxt 或 uploadMessage，消息长度 %d 超过 80000，正在上传文件", utf8.RuneCountInString(message))
+	if (c.enableUpload || c.uploadMessage) && utf8.RuneCountInString(message) > 40000 {
+		log.Printf("启用 -longtxt，消息长度 %d 超过 40000，正在上传文件", utf8.RuneCountInString(message))
 		uploadResp, err := c.uploadMessageAsFile(message)
 		if err != nil {
 			log.Printf("文件上传失败: %v", err)
@@ -708,7 +708,7 @@ func main() {
 	textAfterPrompt = flag.String("textAfterPrompt", "", "提示后缀文本")
 	keepChat = flag.Bool("keepChat", false, "保留聊天会话")
 	ignoreThinking = flag.Bool("ignoreThinking", false, "忽略思考内容")
-	longTxt = flag.Bool("longtxt", false, "启用长文本处理（超过 80000 字符时上传文件）")
+	longTxt = flag.Bool("longtxt", false, "启用长文本处理（超过 40000 字符时上传文件）")
 	httpProxy = flag.String("httpProxy", "", "HTTP/SOCKS5 代理")
 	port = flag.Uint("port", 8180, "服务器端口")
 	flag.Parse()
