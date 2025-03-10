@@ -172,7 +172,7 @@ const (
 	grok3ReasoningModelName = "grok-3-reasoning"
 	completionsPath         = "/v1/chat/completions"
 	listModelsPath          = "/v1/models"
-	messageCharLimit        = 40000
+	messageCharLimit        = 80000
 	defaultBeforePromptText = "For the data below, entries with 'system' are system information, entries with 'assistant' are messages you have previously sent, entries with 'user' are messages sent by the user. You need to respond to the user's last message accordingly based on the corresponding data."
 )
 

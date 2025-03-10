@@ -29,10 +29,11 @@ type GrokClient struct {
 	uploadMessage  bool              // 是否将消息上传为文件
 	keepChat       bool              // 是否保留聊天历史
 	ignoreThinking bool              // 是否忽略思考令牌
+	enableUpload   bool              // 是否启用文件上传
 }
 
 // NewGrokClient 创建一个新的 GrokClient 实例。
-func NewGrokClient(cookie string, isReasoning, enableSearch, uploadMessage, keepChat, ignoreThinking bool) *GrokClient {
+func NewGrokClient(cookie string, isReasoning, enableSearch, uploadMessage, keepChat, ignoreThinking, enableUpload bool) *GrokClient {
 	return &GrokClient{
 		headers: map[string]string{
 			"accept":             "*/*",
@@ -56,6 +57,7 @@ func NewGrokClient(cookie string, isReasoning, enableSearch, uploadMessage, keep
 		uploadMessage:  uploadMessage,
 		keepChat:       keepChat,
 		ignoreThinking: ignoreThinking,
+		enableUpload:   enableUpload,
 	}
 }
 
@@ -172,7 +174,6 @@ const (
 	grok3ReasoningModelName = "grok-3-reasoning"
 	completionsPath         = "/v1/chat/completions"
 	listModelsPath          = "/v1/models"
-	messageCharLimit        = 40000
 	defaultBeforePromptText = "For the data below, entries with 'system' are system information, entries with 'assistant' are messages you have previously sent, entries with 'user' are messages sent by the user. You need to respond to the user's last message accordingly based on the corresponding data."
 )
 
@@ -259,12 +260,15 @@ func (c *GrokClient) uploadMessageAsFile(message string) (*UploadFileResponse, e
 // sendMessage 向 Grok 3 Web API 发送消息并返回响应体。
 func (c *GrokClient) sendMessage(message string, stream bool) (io.ReadCloser, error) {
 	fileId := ""
-	if c.uploadMessage || (len(message) > messageCharLimit && utf8.RuneCountInString(message) > messageCharLimit) {
+	if (c.enableUpload || c.uploadMessage) && utf8.RuneCountInString(message) > 80000 {
+		log.Printf("启用 -longtxt 或 uploadMessage，消息长度 %d 超过 80000，正在上传文件", utf8.RuneCountInString(message))
 		uploadResp, err := c.uploadMessageAsFile(message)
 		if err != nil {
+			log.Printf("文件上传失败: %v", err)
 			return nil, err
 		}
 		fileId = uploadResp.FileMetadataId
+		log.Printf("文件上传成功，文件ID: %s", fileId)
 		message = "请按照附件中的说明进行回复。"
 	}
 
@@ -639,7 +643,7 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		ignoreThink = false
 	}
 
-	grokClient := NewGrokClient(cookie, isReasoning, enableSearch, uploadMessage, keepConversation, ignoreThink)
+	grokClient := NewGrokClient(cookie, isReasoning, enableSearch, uploadMessage, keepConversation, ignoreThink, *longTxt)
 	log.Printf("使用索引 %d 的 cookie 请求 Grok 3 Web API", cookieIndex+1)
 
 	respReader, err := grokClient.sendMessage(messageBuilder.String(), body.Stream)
@@ -651,7 +655,7 @@ func handleChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 		cookieIndex = getCookieIndex(grokCookies, cookieIndex+1)
 		cookie = grokCookies[cookieIndex]
-		grokClient = NewGrokClient(cookie, isReasoning, enableSearch, uploadMessage, keepConversation, ignoreThink)
+		grokClient = NewGrokClient(cookie, isReasoning, enableSearch, uploadMessage, keepConversation, ignoreThink, *longTxt)
 		log.Printf("切换到索引 %d 的 cookie 重试", cookieIndex+1)
 
 		respReader, err = grokClient.sendMessage(messageBuilder.String(), body.Stream)
@@ -704,7 +708,7 @@ func main() {
 	textAfterPrompt = flag.String("textAfterPrompt", "", "提示后缀文本")
 	keepChat = flag.Bool("keepChat", false, "保留聊天会话")
 	ignoreThinking = flag.Bool("ignoreThinking", false, "忽略思考内容")
-	longTxt = flag.Bool("longtxt", false, "启用长文本处理（仅标志，未在 sendMessage 中实现）")
+	longTxt = flag.Bool("longtxt", false, "启用长文本处理（超过 80000 字符时上传文件）")
 	httpProxy = flag.String("httpProxy", "", "HTTP/SOCKS5 代理")
 	port = flag.Uint("port", 8180, "服务器端口")
 	flag.Parse()
