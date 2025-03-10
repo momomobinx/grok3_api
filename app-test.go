@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -185,7 +186,8 @@ var (
 	textAfterPrompt  *string
 	keepChat         *bool
 	ignoreThinking   *bool
-	longTxt          *bool
+	longTxt          *bool // 控制是否启用长文本上传
+	longTxtThreshold int   // 长文本阈值（不需要指针，因为在 main 中解析后固定）
 	httpProxy        *string
 	cookiesDir       *string
 	httpClient       = &http.Client{Timeout: 30 * time.Minute}
@@ -260,8 +262,8 @@ func (c *GrokClient) uploadMessageAsFile(message string) (*UploadFileResponse, e
 // sendMessage 向 Grok 3 Web API 发送消息并返回响应体。
 func (c *GrokClient) sendMessage(message string, stream bool) (io.ReadCloser, error) {
 	fileId := ""
-	if (c.enableUpload || c.uploadMessage) && utf8.RuneCountInString(message) > 40000 {
-		log.Printf("启用 -longtxt，消息长度 %d 超过 40000，正在上传文件", utf8.RuneCountInString(message))
+	if (c.enableUpload || c.uploadMessage) && utf8.RuneCountInString(message) >= longTxtThreshold {
+		log.Printf("启用 -longtxt，消息长度 %d 超过 %d，正在上传文件", utf8.RuneCountInString(message), longTxtThreshold)
 		uploadResp, err := c.uploadMessageAsFile(message)
 		if err != nil {
 			log.Printf("文件上传失败: %v", err)
@@ -708,13 +710,27 @@ func main() {
 	textAfterPrompt = flag.String("textAfterPrompt", "", "提示后缀文本")
 	keepChat = flag.Bool("keepChat", false, "保留聊天会话")
 	ignoreThinking = flag.Bool("ignoreThinking", false, "忽略思考内容")
-	longTxt = flag.Bool("longtxt", false, "启用长文本处理（超过 40000 字符时上传文件）")
+	longTxt = flag.Bool("longtxt", false, "启用长文本处理，后面可接阈值（如 -longtxt 60000），默认 40000")
 	httpProxy = flag.String("httpProxy", "", "HTTP/SOCKS5 代理")
 	port = flag.Uint("port", 8180, "服务器端口")
 	flag.Parse()
 
 	if *port > 65535 {
 		log.Fatalf("服务器端口 %d 超过 65535", *port)
+	}
+
+	// 自定义解析 -longtxt 后面的阈值
+	longTxtThreshold = 40000 // 默认阈值
+	if *longTxt {
+		// 检查命令行参数中 -longtxt 后的值
+		for i, arg := range os.Args {
+			if arg == "-longtxt" && i+1 < len(os.Args) {
+				if threshold, err := strconv.Atoi(os.Args[i+1]); err == nil && threshold > 0 {
+					longTxtThreshold = threshold
+					break
+				}
+			}
+		}
 	}
 
 	*apiToken = strings.TrimSpace(*apiToken)
@@ -803,6 +819,6 @@ func main() {
 
 	http.HandleFunc(completionsPath, handleChatCompletion)
 	http.HandleFunc(listModelsPath, listModels)
-	log.Printf("服务器启动于 :%d，长文本处理: %v，已加载 cookie 数量: %d", *port, *longTxt, len(grokCookies))
+	log.Printf("服务器启动于 :%d，长文本处理: %v，阈值: %d，已加载 cookie 数量: %d", *port, *longTxt, longTxtThreshold, len(grokCookies))
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), nil))
 }
