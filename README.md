@@ -1,36 +1,97 @@
-# **快速使用指南**  
+# Grok 3 Web API Wrapper
 
-## **1. 配置 Cookie**  
-- **📂 存放位置：** 将你的 Cookie 以 `.txt` 格式存放在 `cookies` 文件夹中。  
-- **📌 命名规则：** 每个 `.txt` 文件代表一条 Cookie，文件名可自由命名。  
-- **⚠️ 内容要求：** 仅保留 `sso=xxxxxx` 字段，删除其他内容。  
+[English](README.md) | [中文](README-CN.md)
 
-## **2. 启动项目**
-- **✏️ 写入Token：** 修改`启动.bat`中的`Token`字段。默认为：123456
-- **▶ 运行** `启动.bat` **一键启动**。  
+This is a Go-based tool designed to interact with the Grok 3 Web API, offering an OpenAI-compatible endpoint for chat completions. It enables users to send messages to the Grok 3 Web API and receive responses in a format consistent with OpenAI's chat completion API.
 
-## **3. 解决授权错误**  
-如果遇到 **❌ "Unauthorized: Bearer token required"** 错误，请尝试在 **酒馆 API** 的 **自定义密钥** 中输入默认 Token：123456（或者你自己设定的Token）
-## **4. 出现\n\n格式问题**  
-- 请用[正则](https://github.com/GhostXia/grok3_api-Fix/blob/main/grok3_%E6%9B%BF%E6%8D%A2%E5%9B%9E%E8%BD%A6%E7%AC%A6%E5%8F%B7.json) 作者：[orzogc](https://github.com/orzogc)
-- 虽然绝大多数时候，重新生成一下就好了。
----
+## Features
 
-### **附加事项**  
-✅ **新增功能：**  
-- 通过 `-cookiesDir` 参数自定义 `cookies` 目录位置。
-- 增加`DualStack: false`字段，强制使用IPV4。（位于代码681行处，可自行选择是否使用，默认隐藏字段） 
-- 3月8日：增加"搜索"功能，需在参数中，手动写入代码`enableSearch: 1`开启。
-- 增加`-longtxt`启动项进行附件上传
+- **OpenAI-Compatible Endpoint**: Supports `/v1/chat/completions` and `/v1/models` endpoints.
+- **Streaming Support**: Enables real-time streaming of responses.
+- **Model Selection**: Choose between standard and reasoning models.
+- **Cookie Management**: Manages multiple cookies.
+- **Proxy Support**: Compatible with HTTP and SOCKS5 proxies for network requests.
+- **Web Search**: Added search functionality (March 8th), enable with `enableSearch: 1` parameter.
+- **Long Text Support**: Use `-longtxt` parameter for file attachments.
+- **Custom Cookie Directory**: Set custom cookie directory with `-cookiesDir` parameter.
+- **IPv4 Enforcement**: Added `DualStack: false` field to force IPv4 usage.
 
-❌ **不支持的文件格式：**  
-- **不支持** `xxxx.xxx.txt` 形式的文件名。  
-- **请直接使用** `xxxxx.txt` 格式。  
+## Quick Start Guide
 
-📌 **其他说明**  
-- 其余功能与原项目相同，参考：[grok3_api](https://github.com/orzogc/grok3_api)
-- 使用代理时，如果出现连接失败提示，尝试使用`-httpproxy http://127.0.0.1:xxxx`来使用  
-**安卓用户提示**
-- 启动命令参考（后台启动） `./grok-server -token your-auth-token -cookie xxxxxxx -port 8180 &`
-- 已用`DualStack: false`强制使用IPV4。
-- 具体使用参考：https://grok.com/share/bGVnYWN5_7cafcf60-ca6b-4097-bdbc-ffaee19b2e2c
+### 1. Configure Cookie
+- **📂 Storage Location:** Place your Cookie in `.txt` format in the `cookies` folder.
+- **📌 Naming Rules:** Each `.txt` file represents one Cookie, and you can name the file freely.
+- **⚠️ Content Requirements:** Keep only the `sso=xxxxxx` field, delete other content.
+
+### 2. Launch the Project
+- **✏️ Set Token:** Modify the `Token` field in `启动.bat`. Default is: 123456
+- **▶ Run** `启动.bat` **for one-click startup**.
+
+### 3. Resolve Authorization Errors
+If you encounter **❌ "Unauthorized: Bearer token required"** error, try entering the default Token: 123456 (or your custom Token) in the **Custom Key** of the **SillyTavern API**.
+
+### 4. Fix \n\n Format Issues
+- Use the [regex](https://github.com/GhostXia/grok3_api-Fix/blob/main/grok3_%E6%9B%BF%E6%8D%A2%E5%9B%9E%E8%BD%A6%E7%AC%A6%E5%8F%B7.json) by author: [orzogc](https://github.com/orzogc)
+- In most cases, simply regenerating the response will fix the issue.
+
+## Configuration
+
+You can configure the client using command-line flags or environment variables.
+
+### Command-Line Flags
+
+- `-token`: API authentication token (**required**).
+- `-cookie`: Grok cookie(s) for authentication. Accepts a single cookie or a JSON array of cookies.
+- `-cookiesDir`: Custom directory path for cookie files (default: "cookies").
+- `-longtxt`: Enable long text processing with optional threshold (e.g., `-longtxt 60000`, default: 40000).
+- `-httpProxy`: Specifies an HTTP or SOCKS5 proxy URL (e.g., `http://127.0.0.1:1080`).
+- `-port`: Sets the server port (default: 8180).
+
+### Request Body Parameters
+
+Some configurations can be set in the request body while using the `/v1/chat/completions` endpoint:
+
+```json
+{
+  "messages": [],
+  "model": "grok-3", // "grok-3" for standard model, "grok-3-reasoning" for reasoning model
+  "stream": true, // true for streaming response
+  "grokCookies": ["cookie1", "cookie2"], // single cookie string or array of cookies
+  "cookieIndex": 1, // cookie index (starting from 1), 0 for auto-selection
+  "enableSearch": 1, // 1 to enable web search, 0 to disable
+  "keepChat": 1, // 1 to retain chat conversation, 0 to not retain
+  "ignoreThinking": 1 // 1 to exclude thinking tokens from reasoning model response
+}
+```
+
+## Additional Information
+
+❌ **Unsupported File Formats:**
+- **Not supported:** `xxxx.xxx.txt` filename format.
+- **Please use:** `xxxxx.txt` format directly.
+
+📌 **Other Notes**
+- Other features are the same as the original project: [grok3_api](https://github.com/orzogc/grok3_api)
+- When using a proxy with connection failures, try `-httpproxy http://127.0.0.1:xxxx`
+
+**Android User Tips**
+- Startup command reference (background): `./grok-server -token your-auth-token -cookie xxxxxxx -port 8180 &`
+- IPv4 is enforced with `DualStack: false`.
+- For detailed usage, see: https://grok.com/share/bGVnYWN5_7cafcf60-ca6b-4097-bdbc-ffaee19b2e2c
+
+## Warning
+
+This tool offers an unofficial OpenAI-compatible API of Grok 3, so your account may be **banned** by xAI if using this tool.
+
+Please do not abuse or use this tool for commercial purposes. Use it at your own risk.
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+
+## Special Thanks
+
+- [mem0ai/grok3-api: Unofficial Grok 3 API](https://github.com/mem0ai/grok3-api)
+- [RoCry/grok3-api-cf: Grok 3 via API with Cloudflare for free](https://github.com/RoCry/grok3-api-cf/tree/master)
+- [orzogc/grok3_api: Original project](https://github.com/orzogc/grok3_api)
+- Most code was written by Grok 3, so thanks to Grok 3.
