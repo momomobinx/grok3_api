@@ -27,15 +27,10 @@ WORKDIR /app
 
 # 设置环境变量及默认值
 ENV PORT=8180 \
-    GROK3_AUTH_TOKEN="" \
-    GROK3_COOKIE="" \
-    COOKIE_FILE="" \
-    TEXT_BEFORE_PROMPT="" \
-    TEXT_AFTER_PROMPT="" \
     KEEP_CHAT="false" \
     IGNORE_THINKING="false" \
-    CHARS_LIMIT="50000" \
-    http_proxy=""
+    CHARS_LIMIT="50000"
+
 
 # 从构建阶段复制编译好的二进制文件
 COPY --from=builder /app/main .
