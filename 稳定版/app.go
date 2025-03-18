@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -20,7 +19,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/andybalholm/brotli"
 	"github.com/google/uuid"
 )
 
@@ -37,30 +35,30 @@ type GrokClient struct {
 func NewGrokClient(cookie string, isReasoning bool, enableSearch bool, keepChat bool, ignoreThinking bool) *GrokClient {
 	return &GrokClient{
 		headers: map[string]string{
-			"accept":             "*/*",
-			"accept-encoding":    "gzip, deflate, br, zstd",
-			"accept-language":    "zh-CN,zh;q=0.9",
-			"content-type":       "application/json",
-			"authority":          "grok.com",
-			"origin":             "https://grok.com",
-			"dnt":                "1",
-			"priority":           "u=1, i",
-			"referer":            "https://grok.com/",
-			"sec-ch-ua":          `"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"`,
-			"sec-ch-ua-arch":  '"x86"',
-			"sec-ch-ua-bitness":  '"64"',
-			"sec-ch-ua-full-version": '"134.0.6998.89"'
-			"sec-ch-ua-full-version-list":  '"Chromium";v="134.0.6998.89", "Not:A-Brand";v="24.0.0.0", "Google Chrome";v="134.0.6998.89"',
-			"sec-ch-ua-mobile":   "?0",
-			"sec-ch-ua-model":   '""',
-			"sec-ch-ua-platform": `"Windows"`,
-			"sec-ch-ua-platform-version": `"19.0.0"`,
-			"sec-fetch-dest":     "empty",
-			"sec-fetch-mode":     "cors",
-			"sec-fetch-site":     "same-origin",
-			"sec-gpc":            "1",
-			"user-agent":         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-			"cookie":             cookie,
+			"accept":                      "*/*",
+			"accept-encoding":             "gzip, deflate, br, zstd",
+			"accept-language":             "zh-CN,zh;q=0.9",
+			"content-type":                "application/json",
+			"authority":                   "grok.com",
+			"origin":                      "https://grok.com",
+			"dnt":                         "1",
+			"priority":                    "u=1, i",
+			"referer":                     "https://grok.com/",
+			"sec-ch-ua":                   `"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"`,
+			"sec-ch-ua-arch":              `"x86"`,
+			"sec-ch-ua-bitness":           `"64"`,
+			"sec-ch-ua-full-version":      `"134.0.6998.89"`,
+			"sec-ch-ua-full-version-list": `"Chromium";v="134.0.6998.89", "Not:A-Brand";v="24.0.0.0", "Google Chrome";v="134.0.6998.89"`,
+			"sec-ch-ua-mobile":            "?0",
+			"sec-ch-ua-model":             `""`,
+			"sec-ch-ua-platform":          `"Windows"`,
+			"sec-ch-ua-platform-version":  `"19.0.0"`,
+			"sec-fetch-dest":              "empty",
+			"sec-fetch-mode":              "cors",
+			"sec-fetch-site":              "same-origin",
+			"sec-gpc":                     "1",
+			"user-agent":                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+			"cookie":                      cookie,
 		},
 		isReasoning:    isReasoning,
 		enableSearch:   enableSearch,
