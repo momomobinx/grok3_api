@@ -29,7 +29,11 @@ WORKDIR /app
 ENV PORT=8180 \
     KEEP_CHAT="false" \
     IGNORE_THINKING="false" \
-    CHARS_LIMIT="50000"
+    CHARS_LIMIT="50000" \
+    TEXT_BEFORE_PROMPT="" \
+    TEXT_AFTER_PROMPT="" \
+    COOKIE_FILE=""
+
 
 
 # 从构建阶段复制编译好的二进制文件
@@ -43,7 +47,6 @@ ENTRYPOINT ["./main", \
     "-port=${PORT}", \
     "-token=${GROK3_AUTH_TOKEN}", \
     "-cookie=${GROK3_COOKIE}", \
-    "-cookieFile=${COOKIE_FILE}", \
     "-textBeforePrompt=${TEXT_BEFORE_PROMPT}", \
     "-textAfterPrompt=${TEXT_AFTER_PROMPT}", \
     "-keepChat=${KEEP_CHAT}", \
