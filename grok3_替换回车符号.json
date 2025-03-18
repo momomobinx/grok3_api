@@ -1,0 +1,17 @@
+{
+    "id": "ae029eed-e581-4457-a321-8eb37e642aac",
+    "scriptName": "grok3 替换回车符号",
+    "findRegex": "/\\\\n/g",
+    "replaceString": "\n",
+    "trimStrings": [],
+    "placement": [
+        2
+    ],
+    "disabled": false,
+    "markdownOnly": true,
+    "promptOnly": true,
+    "runOnEdit": true,
+    "substituteRegex": 0,
+    "minDepth": null,
+    "maxDepth": null
+}
